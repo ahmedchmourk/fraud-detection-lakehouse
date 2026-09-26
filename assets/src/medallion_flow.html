@@ -1,0 +1,55 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css">
+<style>
+.canvas { width: 1500px; }
+.cols { display: grid; grid-template-columns: 1fr 44px 1fr 44px 1fr; margin-top: 30px; align-items: stretch; }
+.col { background: #111a2e; border: 1px solid #243152; border-radius: 16px; overflow: hidden; }
+.head { padding: 16px 20px; font-weight: 700; font-size: 18px; display:flex; justify-content: space-between; align-items: center; }
+.head small { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; opacity: .8; }
+.bronze .head { background: linear-gradient(90deg, #78350f, #b45309); }
+.silver .head { background: linear-gradient(90deg, #334155, #64748b); }
+.gold .head { background: linear-gradient(90deg, #854d0e, #ca8a04); }
+.body { padding: 16px 20px 20px; }
+.body h4 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #64748b; margin: 14px 0 6px; }
+.body h4:first-child { margin-top: 0; }
+ul { list-style: none; } li { font-size: 13px; color: #cbd5e1; padding: 4px 0; line-height: 1.45; }
+li::before { content: "▸ "; color: #22d3ee; }
+.table { font-family: "JetBrains Mono", Menlo, monospace; font-size: 12px; background: #0b1220; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; color: #e2e8f0; }
+.arrow { flex-direction: column; font-size: 11px; color: #64748b; gap: 6px; text-align:center; }
+.formula { margin-top: 26px; background: #111a2e; border: 1px solid #243152; border-radius: 14px; padding: 16px 20px; font-size: 13px; color: #cbd5e1; }
+.formula code { font-size: 12.5px; color: #67e8f9; }
+</style></head><body><div class="canvas">
+<h1>Medallion Data Flow</h1>
+<div class="sub">Delta Lake tables on MinIO · transformations expressed as version-controlled DuckDB SQL models</div>
+<div class="cols">
+  <div class="col bronze"><div class="head">🥉 Bronze <small>raw · append-only</small></div><div class="body">
+    <h4>Tables</h4>
+    <div class="table">s3://bronze/transactions/ingest_date=YYYY-MM-DD/</div>
+    <div class="table">s3://bronze/stream_metrics/</div>
+    <div class="table">s3://bronze/quarantine/</div>
+    <h4>Guarantees</h4>
+    <ul><li>Contract-validated events only (types, ranges, timestamps)</li><li>Invalid payloads quarantined with error reason</li>
+      <li>Kafka partition/offset lineage columns</li><li>Offsets committed after Delta commit → at-least-once</li><li>Small-file compaction + vacuum</li></ul>
+  </div></div>
+  <div class="arrow"><svg width="40" height="16"><path d="M4 8h28m-6-6 6 6-6 6" stroke="#64748b" stroke-width="2" fill="none"/></svg>DuckDB</div>
+  <div class="col silver"><div class="head">🥈 Silver <small>cleansed · enriched</small></div><div class="body">
+    <h4>Table</h4>
+    <div class="table">s3://silver/cleansed_transactions/</div>
+    <h4>Transformations</h4>
+    <ul><li>Deduplicate on <code>transaction_id</code> (exactly-once view)</li><li>Drop null keys / negative amounts / bad labels</li>
+      <li>Calendar attrs, amount buckets</li><li>Account velocity: txns in trailing 10 min (event time)</li>
+      <li>Account amount z-score spike flag</li><li>PCA outlier flag (V10/V12/V14 &lt; −5)</li><li>Risk score 0–100 &amp; tier (LOW → CRITICAL)</li></ul>
+  </div></div>
+  <div class="arrow"><svg width="40" height="16"><path d="M4 8h28m-6-6 6 6-6 6" stroke="#64748b" stroke-width="2" fill="none"/></svg>DuckDB</div>
+  <div class="col gold"><div class="head">🥇 Gold <small>business-ready</small></div><div class="body">
+    <h4>Tables</h4>
+    <div class="table">daily_merchant_risk_summary</div>
+    <div class="table">hourly_fraud_rate_metrics</div>
+    <div class="table">high_risk_account_leaderboard</div>
+    <h4>Serves</h4>
+    <ul><li>Merchant risk exposure &amp; fraud $ per day</li><li>Hourly fraud rate with TP / FP / FN, precision, recall</li>
+      <li>Top-100 accounts ranked by flagged activity</li><li>Streamlit dashboard &amp; ad-hoc DuckDB queries</li></ul>
+  </div></div>
+</div>
+<div class="formula">Risk model (Silver): <code>risk_score = 100 · σ(−8.27 − 0.72·V14 − 0.12·V12 − 0.36·V10 + 0.50·V4 + … + 0.046·ln(1+amount))</code>
+ — logistic regression fitted offline on the first 70% of the Kaggle timeline; holdout ROC-AUC 0.971 · PR-AUC 0.708. Flag threshold: score ≥ 50.</div>
+</div></body></html>

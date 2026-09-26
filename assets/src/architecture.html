@@ -1,0 +1,54 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css">
+<style>
+.canvas { width: 1600px; }
+.row { display: grid; grid-template-columns: 210px 36px 210px 36px 220px 36px 250px; align-items: center; margin-top: 34px; }
+.lake { margin-top: 26px; display: grid; grid-template-columns: 1fr 36px 300px; gap: 0; align-items: stretch; }
+.lakebox { border: 1px dashed #334155; border-radius: 18px; padding: 18px; background: rgba(17,26,46,.5); }
+.lakebox .title { font-size: 13px; color: #94a3b8; font-weight: 600; margin-bottom: 12px; display:flex; justify-content: space-between; }
+.layers { display: grid; grid-template-columns: 1fr 40px 1fr 40px 1fr; align-items: center; }
+.b { border-top: 3px solid #b45309; } .s { border-top: 3px solid #94a3b8; } .g { border-top: 3px solid #eab308; }
+.duck { margin-top: 14px; text-align: center; font-size: 12px; color: #94a3b8; }
+.duck b { color: #fde047; }
+.vert { display:grid; grid-template-columns: 210px 36px 210px 36px 220px 36px 250px; height: 34px; }
+.vert svg { grid-column: 7; justify-self: center; }
+.side { display:flex; flex-direction: column; gap: 14px; }
+</style></head><body><div class="canvas">
+<h1>Real-Time Fraud &amp; Anomaly Detection — Medallion Lakehouse</h1>
+<div class="sub">Kaggle credit-card transactions replayed as a live stream · Redpanda · Delta Lake on MinIO · DuckDB · Streamlit — all orchestrated by Docker Compose</div>
+
+<div class="row">
+  <div class="node"><h3><span class="dot" style="background:#20beff"></span>Kaggle Dataset</h3>
+    <p><code>mlg-ulb/creditcardfraud</code><br>284,807 real transactions<br>V1–V28 PCA · Amount · Class</p><span class="tag">kagglehub</span></div>
+  <div class="arrow"><svg width="36" height="16"><path d="M2 8h26m-6-6 6 6-6 6" stroke="#64748b" stroke-width="2" fill="none"/></svg></div>
+  <div class="node"><h3><span class="dot" style="background:#3776ab"></span>Stream Producer</h3>
+    <p>Replays CSV rows as JSON events at 50–100 msg/s, idempotent Kafka producer</p><span class="tag">python</span><span class="tag">zstd</span></div>
+  <div class="arrow"><svg width="36" height="16"><path d="M2 8h26m-6-6 6 6-6 6" stroke="#64748b" stroke-width="2" fill="none"/></svg></div>
+  <div class="node"><h3><span class="dot" style="background:#e2401b"></span>Redpanda</h3>
+    <p>Kafka-compatible broker<br>topic <code>raw-transactions</code> · 3 partitions · keyed by account</p><span class="tag">kafka api</span></div>
+  <div class="arrow"><svg width="36" height="16"><path d="M2 8h26m-6-6 6 6-6 6" stroke="#64748b" stroke-width="2" fill="none"/></svg></div>
+  <div class="node"><h3><span class="dot" style="background:#22d3ee"></span>Streaming Engine</h3>
+    <p>Schema validation → quarantine · rolling 60s window metrics · micro-batch Delta appends · commit-after-write (at-least-once)</p><span class="tag">confluent-kafka</span><span class="tag">delta-rs</span></div>
+</div>
+<div class="vert"><svg width="16" height="34"><path d="M8 2v26m-6-6 6 6 6-6" stroke="#64748b" stroke-width="2" fill="none"/></svg></div>
+
+<div class="lake">
+  <div class="lakebox">
+    <div class="title"><span>MinIO · S3-compatible object storage · Delta Lake tables</span><span>s3://bronze · s3://silver · s3://gold</span></div>
+    <div class="layers">
+      <div class="node b"><h3>🥉 Bronze</h3><p><code>transactions</code> (partitioned by ingest_date)<br><code>stream_metrics</code> · <code>quarantine</code><br>raw, append-only, replayable</p></div>
+      <div class="arrow"><svg width="40" height="16"><path d="M4 8h28m-6-6 6 6-6 6" stroke="#64748b" stroke-width="2" fill="none"/></svg></div>
+      <div class="node s"><h3>🥈 Silver</h3><p><code>cleansed_transactions</code><br>dedup · cleanse · enrich · velocity &amp; amount-spike flags · logistic risk score (0–100)</p></div>
+      <div class="arrow"><svg width="40" height="16"><path d="M4 8h28m-6-6 6 6-6 6" stroke="#64748b" stroke-width="2" fill="none"/></svg></div>
+      <div class="node g"><h3>🥇 Gold</h3><p><code>daily_merchant_risk_summary</code><br><code>hourly_fraud_rate_metrics</code><br><code>high_risk_account_leaderboard</code></p></div>
+    </div>
+    <div class="duck">Bronze → Silver → Gold transformations run every 30s by the <b>DuckDB</b> SQL engine (<code>models/*.sql</code>)</div>
+  </div>
+  <div class="arrow"><svg width="36" height="16"><path d="M2 8h26m-6-6 6 6-6 6" stroke="#64748b" stroke-width="2" fill="none"/></svg></div>
+  <div class="side">
+    <div class="node" style="border-color:#ff4b4b55"><h3><span class="dot" style="background:#ff4b4b"></span>Streamlit Monitor</h3>
+      <p>Live throughput (60s window) · real-time fraud alert feed · Gold analytics · detection precision/recall</p><span class="tag">:8501</span></div>
+    <div class="node"><h3><span class="dot" style="background:#a78bfa"></span>Ops consoles</h3>
+      <p>Redpanda Console <code>:8080</code><br>MinIO Console <code>:9001</code></p></div>
+  </div>
+</div>
+</div></body></html>

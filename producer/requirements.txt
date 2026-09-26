@@ -1,0 +1,2 @@
+confluent-kafka==2.15.1
+kagglehub==1.0.2

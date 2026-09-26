@@ -1,0 +1,12 @@
+# Kaggle dataset cache (downloaded at runtime, ~150 MB)
+data/*
+!data/.gitkeep
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+.DS_Store

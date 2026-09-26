@@ -1,0 +1,172 @@
+name: fraud-lakehouse
+
+x-s3-env: &s3-env
+  S3_ENDPOINT: http://minio:9000
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+  AWS_REGION: us-east-1
+  BRONZE_URI: s3://bronze
+  SILVER_URI: s3://silver
+  GOLD_URI: s3://gold
+
+services:
+  # ------------------------------------------------------------------ broker
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.18
+    container_name: redpanda
+    command:
+      - redpanda start
+      - --mode dev-container
+      - --smp 1
+      - --memory 1G
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+    ports:
+      - "19092:19092"
+      - "18081:18081"
+      - "18082:18082"
+      - "19644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.18
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        rpk topic create raw-transactions --brokers redpanda:9092 -p 3 -r 1
+        -c retention.ms=86400000 || true
+    restart: "no"
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.8.5
+    container_name: redpanda-console
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "8080:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------ object storage
+  minio:
+    # MinIO no longer publishes images to Docker Hub/Quay; Chainguard ships maintained builds.
+    image: cgr.dev/chainguard/minio:latest
+    container_name: minio
+    user: "0:0"
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # Image ships bash but no curl/mc: probe the liveness endpoint over /dev/tcp.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /minio/health/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          read -r _ code _ <&3 && [ "$$code" = "200" ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio-init:
+    image: amazon/aws-cli:2.27.50
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        for b in bronze silver gold; do
+          aws --endpoint-url http://minio:9000 s3api head-bucket --bucket $$b 2>/dev/null ||
+          aws --endpoint-url http://minio:9000 s3 mb s3://$$b;
+        done && echo 'buckets ready'
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_DEFAULT_REGION: us-east-1
+    restart: "no"
+
+  # ------------------------------------------------------------------ pipeline
+  producer:
+    build: ./producer
+    container_name: producer
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      KAFKA_TOPIC: raw-transactions
+      MSG_RATE: ${MSG_RATE:-75}
+      DATA_DIR: /data
+      LOOP_FOREVER: "true"
+      KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
+      KAGGLE_KEY: ${KAGGLE_KEY:-}
+    volumes:
+      - ./data:/data
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  streaming-engine:
+    build: ./streaming_engine
+    container_name: streaming-engine
+    environment:
+      <<: *s3-env
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      KAFKA_TOPIC: raw-transactions
+      KAFKA_GROUP_ID: bronze-writer
+      BATCH_MAX_SECONDS: 10
+      WINDOW_SECONDS: 60
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  transformer:
+    build: ./lakehouse_transformations
+    container_name: transformer
+    environment:
+      <<: *s3-env
+      TRANSFORM_INTERVAL_SECONDS: 30
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+    environment:
+      <<: *s3-env
+      DASHBOARD_REFRESH_SECONDS: 5
+    ports:
+      - "8501:8501"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  redpanda-data:
+  minio-data:
